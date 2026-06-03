@@ -4,7 +4,7 @@ Stream live video in your Tesla while driving — bypassing the Drive Mode brows
 
 A diagnostic **probe** to map Tesla browser capabilities + a fully-functional **Twitch live stream client** using only what the embedded Chromium provides.
 
-**Disclaimer**: This is a technical exploration of the Tesla browser's limitations. It is not intended to encourage watching video while driving. The driver remains responsible for their attention on the road.
+**Disclaimer**: Watching video while driving is **dangerous and illegal** in most jurisdictions. This project is purely a technical research exercise to explore the limits of Tesla's Drive Mode browser restrictions. Do not use it while operating a vehicle. The author assumes no responsibility for misuse.
 
 ---
 

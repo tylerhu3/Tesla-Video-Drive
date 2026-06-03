@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Tesla Video Drive</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;background:#0a0a0f;color:#e0e0e0;padding:20px;font-size:15px}
+h1{font-size:1.3rem;color:#00d4ff;text-align:center;margin-bottom:4px}
+.subtitle{text-align:center;color:#888;font-size:.8rem;margin-bottom:20px}
+.card{display:flex;align-items:center;gap:14px;background:#0f0f1a;border:1px solid #2a2a3a;border-radius:10px;padding:16px;margin-bottom:12px;cursor:pointer;text-decoration:none;color:inherit;transition:all .2s}
+.card:active{transform:scale(.97)}
+.card .icon{width:44px;height:44px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:1.4rem;flex-shrink:0}
+.icon.blue{background:#002a40}
+.icon.purple{background:#220044}
+.card .body{flex:1}
+.card .title{font-size:.95rem;font-weight:600;margin-bottom:2px}
+.card .desc{font-size:.75rem;color:#888}
+.card .arrow{font-size:1.2rem;color:#555}
+.footer{text-align:center;font-size:.7rem;color:#555;margin-top:20px;padding:10px}
+</style>
+</head>
+<body>
+
+<h1>Tesla Video Drive</h1>
+<p class="subtitle">Browser restriction research project</p>
+
+<a class="card" href="/probe/">
+  <div class="icon blue">🔬</div>
+  <div class="body">
+    <div class="title">Browser Probe</div>
+    <div class="desc">Diagnostic — tests APIs, codecs, WebGL, mic, and Tesla-specific capabilities</div>
+  </div>
+  <span class="arrow">→</span>
+</a>
+
+<a class="card" href="/twitch-client/">
+  <div class="icon purple">📺</div>
+  <div class="body">
+    <div class="title">Twitch Client</div>
+    <div class="desc">Live stream at 30 FPS — JSMpeg MPEG1 + audio sync + OAuth follows</div>
+  </div>
+  <span class="arrow">→</span>
+</a>
+
+<div class="footer">
+  Disclaimer: Technical research only. Do not use while driving.
+</div>
+
+</body>
+</html>

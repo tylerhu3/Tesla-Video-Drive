@@ -62,6 +62,31 @@ Pages:
 
 ## Installation
 
+### 1. System dependencies
+
+The server requires **ffmpeg** and **yt-dlp** on your system:
+
+```bash
+# Debian/Ubuntu
+sudo apt install ffmpeg
+pip install yt-dlp
+
+# macOS
+brew install ffmpeg yt-dlp
+
+# Windows (scoop)
+scoop install ffmpeg yt-dlp
+# or download manually: https://ffmpeg.org / https://github.com/yt-dlp/yt-dlp
+```
+
+Verify both are available:
+```bash
+ffmpeg -version | head -1
+yt-dlp --version
+```
+
+### 2. Node dependencies
+
 ```bash
 git clone https://github.com/madpowah/tesla-video-drive.git
 cd tesla-video-drive
@@ -70,6 +95,8 @@ cp .env.example .env
 ```
 
 Edit `.env` with your Twitch app credentials (see [Configuration](#configuration)).
+
+### 3. Start
 
 ```bash
 npm start

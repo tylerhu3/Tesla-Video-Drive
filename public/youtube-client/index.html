@@ -59,6 +59,9 @@ h2{font-size:.72rem;color:#888;text-transform:uppercase;margin-bottom:6px;letter
   <span style="font-size:.7rem;color:#888">Drive Mode Ready</span>
 </div>
 
+<!-- Server Health Warning Banner -->
+<div id="serverAlert" style="display:none;background:#2b1212;border:1px solid #772222;border-radius:6px;padding:8px 12px;margin-bottom:8px;font-size:.78rem;color:#ff9999;"></div>
+
 <!-- Player Area -->
 <div id="playerBox">
   <div class="player-bar">
@@ -124,6 +127,66 @@ h2{font-size:.72rem;color:#888;text-transform:uppercase;margin-bottom:6px;letter
   var nc = $('nc'), na = $('na');
   var player = null, curVideo = null, fpsCount = 0, lastFps = 0;
   var history = JSON.parse(localStorage.getItem('yt_history') || '[]');
+
+  // Patch JSMpeg WebSocket source to intercept server JSON status/error messages
+  // and prevent text strings from corrupting the binary MPEG-TS BitStream decoder
+  if (window.JSMpeg && JSMpeg.Source && JSMpeg.Source.WebSocket) {
+    var origOnMessage = JSMpeg.Source.WebSocket.prototype.onMessage;
+    JSMpeg.Source.WebSocket.prototype.onMessage = function (ev) {
+      if (typeof ev.data === 'string') {
+        try {
+          var msg = JSON.parse(ev.data);
+          console.log('[WebSocket Message]', msg);
+          if (msg.type === 'status') {
+            setStatus(msg.message);
+            if ($('npMeta')) $('npMeta').textContent = msg.message;
+          } else if (msg.type === 'error') {
+            var errMsg = msg.message || 'Stream error';
+            setStatus('Server error: ' + errMsg);
+            if ($('npMeta')) $('npMeta').textContent = 'Error: ' + errMsg;
+            console.error('[Stream Error]', errMsg);
+          }
+        } catch (e) {
+          console.warn('[WebSocket Text]', ev.data);
+        }
+        return; // Don't forward plain text strings to binary MPEG decoder!
+      }
+      origOnMessage.call(this, ev);
+    };
+
+    var origOnClose = JSMpeg.Source.WebSocket.prototype.onClose;
+    JSMpeg.Source.WebSocket.prototype.onClose = function (ev) {
+      console.log('[WebSocket Closed]', ev);
+      if ($('npMeta') && !$('npMeta').textContent.startsWith('Error:')) {
+        if (ev && ev.code && ev.code !== 1000) {
+          $('npMeta').textContent = 'Disconnected (code ' + ev.code + ')';
+        }
+      }
+      origOnClose.call(this, ev);
+    };
+  }
+
+  function checkServerHealth() {
+    var x = new XMLHttpRequest();
+    x.open('GET', '/api/health', true);
+    x.onload = function () {
+      try {
+        var h = JSON.parse(x.responseText);
+        var alertEl = $('serverAlert');
+        if (!h.ok) {
+          var msgs = [];
+          if (!h.ytdlp.ok) msgs.push('yt-dlp missing on server (' + (h.ytdlp.version || h.ytdlp.path) + ')');
+          if (!h.ffmpeg.ok) msgs.push('ffmpeg missing on server (' + (h.ffmpeg.version || h.ffmpeg.path) + ')');
+          alertEl.style.display = 'block';
+          alertEl.innerHTML = '⚠️ <b>Server Warning:</b> ' + msgs.join(', ') + '. Video playback will fail until server dependencies are ready.';
+        } else {
+          alertEl.style.display = 'none';
+        }
+      } catch (e) {}
+    };
+    x.send();
+  }
+  checkServerHealth();
 
   function saveHistory() {
     localStorage.setItem('yt_history', JSON.stringify(history.slice(0, 20)));
@@ -242,6 +305,10 @@ h2{font-size:.72rem;color:#888;text-transform:uppercase;margin-bottom:6px;letter
     // Start Audio
     na.preload = 'none';
     na.src = '/api/live-audio?yt=' + encodeURIComponent(videoTarget) + '&_=' + Date.now();
+    na.onerror = function () {
+      console.warn('[Audio Stream Error]', na.error);
+      setStatus('Audio stream error (continuing with video...)');
+    };
     na.load();
     (function tryPlay() {
       na.play().catch(function () { setTimeout(tryPlay, 150); });
@@ -257,6 +324,7 @@ h2{font-size:.72rem;color:#888;text-transform:uppercase;margin-bottom:6px;letter
     var startPlayer = function () {
       if (player) return;
       $('npMeta').textContent = 'Connecting JSMpeg...';
+      console.log('[Player] Connecting WebSocket to:', wsUrl);
       try {
         player = new JSMpeg.Player(wsUrl, {
           canvas: nc,
@@ -278,23 +346,25 @@ h2{font-size:.72rem;color:#888;text-transform:uppercase;margin-bottom:6px;letter
           }
         });
       } catch (e) {
+        console.error('[JSMpeg Init Error]', e);
         setStatus('JSMpeg player error: ' + e.message);
+        $('npMeta').textContent = 'Player error: ' + e.message;
       }
     };
 
-    // Synchronize video launch with audio start
+    // Synchronize video launch with audio start (max wait 800ms)
     var syncTimer = setInterval(function () {
       if (na.readyState >= 2 && na.currentTime > 0) {
         clearInterval(syncTimer);
         startPlayer();
       }
-    }, 200);
+    }, 150);
 
-    // Timeout: force start video even if audio takes time
+    // Timeout: force start video quickly even if audio takes time to buffer
     setTimeout(function () {
       clearInterval(syncTimer);
       startPlayer();
-    }, 4000);
+    }, 800);
   }
 
   function stop() {

@@ -4,9 +4,11 @@
   "description": "Bypass Tesla Drive Mode browser video restrictions — Probe + YouTube Player",
   "main": "server/server.js",
   "scripts": {
-    "start": "node server/server.js"
+    "start": "node server/server.js",
+    "postinstall": "node scripts/install-ytdlp.js"
   },
   "dependencies": {
+    "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "express": "^4.18.2",
     "ws": "^8.21.0"
   }

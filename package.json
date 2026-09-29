@@ -1,7 +1,7 @@
 {
   "name": "tesla-video-drive",
   "version": "1.0.0",
-  "description": "Bypass Tesla Drive Mode browser video restrictions — Probe + Twitch Client",
+  "description": "Bypass Tesla Drive Mode browser video restrictions — Probe + YouTube Player",
   "main": "server/server.js",
   "scripts": {
     "start": "node server/server.js"

@@ -53,6 +53,7 @@ Pages:
 |-----|-------------|
 | `/probe/` | Browser capability diagnostic — tests APIs, codecs, WebGL, mic |
 | `/twitch-client/` | Full Twitch client — JSMpeg 30fps, OAuth, audio sync |
+| `/youtube-client/` | Full YouTube player — JSMpeg 30fps, video search, presets & history |
 
 ## Requirements
 
@@ -154,6 +155,15 @@ ProxyTimeout 300
 | `GET` | `/api/twitch/login` | OAuth login redirect |
 | `GET` | `/api/twitch/callback` | OAuth callback |
 | `GET` | `/api/twitch/follows?token=X` | Fetch followed channels |
+
+### YouTube
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `WS` | `/ws/mpeg1?yt=VIDEO_ID_OR_URL&quality=720` | MPEG1-TS video stream via WebSocket |
+| `GET` | `/api/live-audio?yt=VIDEO_ID_OR_URL` | MP3 audio stream |
+| `GET` | `/api/youtube/search?q=QUERY&limit=6` | Search YouTube videos |
+| `GET` | `/api/youtube/info?v=VIDEO_ID_OR_URL` | Video metadata (title, duration, channel, thumbnail) |
 
 ### Quality presets
 

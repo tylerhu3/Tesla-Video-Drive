@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<title>YouTube Drive Player</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;background:#0a0a0f;color:#e0e0e0;padding:8px;font-size:14px}
+.header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;padding:0 4px}
+.back-btn{color:#888;text-decoration:none;font-size:.85rem;font-weight:600}
+.back-btn:hover{color:#fff}
+h1{font-size:1.2rem;color:#ff3333;display:flex;align-items:center;gap:6px}
+h1 span{font-size:.9rem}
+.p{background:#0f0f1a;border:1px solid #2a2a3a;border-radius:8px;padding:10px;margin-bottom:8px}
+h2{font-size:.72rem;color:#888;text-transform:uppercase;margin-bottom:6px;letter-spacing:.3px;display:flex;justify-content:space-between;align-items:center}
+.row{display:flex;gap:6px;align-items:center;margin:4px 0;flex-wrap:wrap}
+.inp{flex:1;padding:10px 12px;background:#050510;border:1px solid #333;border-radius:6px;color:#e0e0e0;font-size:.85rem;min-width:0}
+.inp:focus{outline:none;border-color:#ff3333}
+.btn{padding:10px 14px;border:none;border-radius:6px;font-size:.8rem;font-weight:600;cursor:pointer;transition:background .15s}
+.btn:active{opacity:.6;transform:scale(.97)}
+.btn-red{background:#cc0000;color:#fff}
+.btn-red:hover{background:#e60000}
+.btn-dark{background:#1e1e2e;color:#bbb;border:1px solid #333}
+.btn-dark:hover{color:#fff;background:#28283d}
+.btn-stop{background:#881111;color:#fff}
+.stat{background:#050510;border-left:3px solid #ff3333;padding:6px 10px;border-radius:0 6px 6px 0;font-size:.72rem;min-height:22px;margin-bottom:8px}
+
+/* Presets */
+.pill-group{display:flex;gap:6px;flex-wrap:wrap;margin:4px 0}
+.pill{background:#181828;border:1px solid #2e2e42;border-radius:16px;padding:5px 12px;font-size:.75rem;cursor:pointer;color:#ddd;transition:all .15s}
+.pill:active{transform:scale(.95);background:#ff3333;color:#fff}
+
+/* Video Card & Search Results */
+.video-card{display:flex;align-items:center;gap:10px;padding:8px;border-radius:6px;margin:4px 0;border:1px solid #222233;background:#090914;cursor:pointer;transition:background .15s}
+.video-card:active{background:#161628}
+.v-thumb{width:80px;height:45px;background:#1a1a24;border-radius:4px;overflow:hidden;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:1.2rem;color:#555}
+.v-info{flex:1;min-width:0}
+.v-title{font-size:.82rem;font-weight:600;color:#eee;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.v-meta{font-size:.7rem;color:#777;margin-top:2px}
+.v-play{color:#ff4444;font-size:1.1rem;padding:0 6px}
+.v-del{color:#666;font-size:1rem;padding:4px 8px;cursor:pointer}
+.v-del:active{color:#f33}
+
+/* Player Overlay */
+#playerBox{display:none;position:relative;width:100%;background:#000;border-radius:8px;overflow:hidden;margin-bottom:8px;box-shadow:0 4px 12px rgba(0,0,0,.6)}
+.player-bar{display:flex;justify-content:space-between;align-items:center;padding:6px 10px;background:rgba(0,0,0,.75);font-size:.75rem}
+#nc{width:100%;display:block;background:#000}
+.ctrl-bar{display:flex;gap:8px;align-items:center;padding:6px 10px;background:rgba(12,12,18,.9);flex-wrap:wrap}
+.quality-sel{background:#111;color:#eee;border:1px solid #444;padding:4px 6px;border-radius:4px;font-size:.7rem}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <a href="/" class="back-btn">← Back</a>
+  <h1>▶️ <span>YouTube Player</span></h1>
+  <span style="font-size:.7rem;color:#888">Drive Mode Ready</span>
+</div>
+
+<!-- Player Area -->
+<div id="playerBox">
+  <div class="player-bar">
+    <span><span style="color:#ff4444;font-weight:600" id="npTitle">Loading...</span> <span style="color:#0f0;margin-left:6px" id="npFps">0 FPS</span></span>
+    <span id="npMeta" style="color:#888;font-size:.7rem">30 FPS MPEG1</span>
+  </div>
+  <canvas id="nc"></canvas>
+  <div class="ctrl-bar">
+    <span style="color:#888;font-size:.7rem">Vol</span>
+    <input type="range" id="vol" min="0" max="100" value="100" style="flex:1;height:5px;cursor:pointer">
+    <select id="quality" class="quality-sel">
+      <option value="480">480p</option>
+      <option value="720" selected>720p</option>
+      <option value="360">360p</option>
+      <option value="1080">1080p</option>
+    </select>
+    <button class="btn btn-dark" id="btnSyncMinus" style="padding:4px 8px;font-size:.7rem">-1s</button>
+    <button class="btn btn-dark" id="btnSyncPlus" style="padding:4px 8px;font-size:.7rem">+1s</button>
+    <button class="btn btn-stop" id="npStop" style="padding:4px 10px;font-size:.7rem">Stop</button>
+  </div>
+</div>
+<audio id="na" style="display:none"></audio>
+
+<!-- Search / URL Input -->
+<div class="p">
+  <h2>Search or Video URL</h2>
+  <div class="row">
+    <input class="inp" id="inpSearch" placeholder="Search YouTube or paste URL / Video ID">
+    <button class="btn btn-red" id="btnSearch">Search</button>
+    <button class="btn btn-dark" id="btnDirectPlay">Play</button>
+  </div>
+  <div class="pill-group" style="margin-top:8px">
+    <span class="pill" data-q="tesla news">Tesla News</span>
+    <span class="pill" data-q="lofi hip hop radio">Lofi Live</span>
+    <span class="pill" data-q="car reviews">Car Reviews</span>
+    <span class="pill" data-q="synthwave radio">Synthwave</span>
+  </div>
+</div>
+
+<!-- Search Results -->
+<div class="p" id="secResults" style="display:none">
+  <h2>Search Results</h2>
+  <div id="resultsList"></div>
+</div>
+
+<!-- History / Favorites -->
+<div class="p">
+  <h2>
+    <span>Recent / Saved Videos</span>
+    <span id="clearHistory" style="cursor:pointer;color:#555;font-weight:normal;font-size:.65rem">Clear</span>
+  </h2>
+  <div id="historyList">
+    <div style="color:#555;text-align:center;padding:12px;font-size:.78rem;">Search or play a video to build history</div>
+  </div>
+</div>
+
+<div class="stat"><span id="st">Ready — canvas WebGL stream avoids vehicle video pause restriction</span></div>
+
+<script src="jsmpeg.min.js"></script>
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var nc = $('nc'), na = $('na');
+  var player = null, curVideo = null, fpsCount = 0, lastFps = 0;
+  var history = JSON.parse(localStorage.getItem('yt_history') || '[]');
+
+  function saveHistory() {
+    localStorage.setItem('yt_history', JSON.stringify(history.slice(0, 20)));
+  }
+
+  function setStatus(msg) {
+    $('st').textContent = msg;
+  }
+
+  function addHistoryItem(item) {
+    history = history.filter(function (h) { return h.id !== item.id; });
+    history.unshift(item);
+    saveHistory();
+    renderHistory();
+  }
+
+  function renderHistory() {
+    var hl = $('historyList');
+    if (!history.length) {
+      hl.innerHTML = '<div style="color:#555;text-align:center;padding:12px;font-size:.78rem;">Search or play a video to build history</div>';
+      return;
+    }
+    var h = '';
+    for (var i = 0; i < history.length; i++) {
+      var item = history[i];
+      h += '<div class="video-card" data-id="' + item.id + '" data-title="' + encodeURIComponent(item.title || item.id) + '">';
+      h += '<div class="v-thumb">▶</div>';
+      h += '<div class="v-info"><div class="v-title">' + (item.title || item.id) + '</div>';
+      h += '<div class="v-meta">' + (item.channel || 'YouTube') + (item.duration ? ' • ' + item.duration : '') + '</div></div>';
+      h += '<span class="v-play">▶</span>';
+      h += '<span class="v-del" data-del="' + item.id + '">✕</span>';
+      h += '</div>';
+    }
+    hl.innerHTML = h;
+
+    [].forEach.call(hl.querySelectorAll('.video-card'), function (el) {
+      el.onclick = function (e) {
+        if (e.target.classList.contains('v-del')) return;
+        playVideo(this.dataset.id, decodeURIComponent(this.dataset.title));
+      };
+    });
+
+    [].forEach.call(hl.querySelectorAll('.v-del'), function (el) {
+      el.onclick = function (e) {
+        e.stopPropagation();
+        var id = this.dataset.del;
+        history = history.filter(function (h) { return h.id !== id; });
+        saveHistory();
+        renderHistory();
+      };
+    });
+  }
+
+  function searchYouTube(query) {
+    if (!query) return;
+    setStatus('Searching YouTube for "' + query + '"...');
+    var x = new XMLHttpRequest();
+    x.open('GET', '/api/youtube/search?q=' + encodeURIComponent(query), true);
+    x.onload = function () {
+      try {
+        var res = JSON.parse(x.responseText);
+        if (res.ok && res.results && res.results.length) {
+          renderSearchResults(res.results);
+          setStatus('Found ' + res.results.length + ' results');
+        } else {
+          setStatus('No results found for "' + query + '"');
+        }
+      } catch (e) {
+        setStatus('Error searching YouTube');
+      }
+    };
+    x.onerror = function () { setStatus('Network error while searching'); };
+    x.send();
+  }
+
+  function renderSearchResults(results) {
+    var sec = $('secResults'), list = $('resultsList');
+    sec.style.display = 'block';
+    var h = '';
+    for (var i = 0; i < results.length; i++) {
+      var r = results[i];
+      h += '<div class="video-card" data-id="' + r.id + '" data-title="' + encodeURIComponent(r.title) + '" data-ch="' + encodeURIComponent(r.channel) + '" data-dur="' + (r.duration || '') + '">';
+      h += '<div class="v-thumb">▶</div>';
+      h += '<div class="v-info"><div class="v-title">' + r.title + '</div>';
+      h += '<div class="v-meta">' + r.channel + (r.duration ? ' • ' + r.duration : '') + '</div></div>';
+      h += '<span class="v-play">▶ Play</span>';
+      h += '</div>';
+    }
+    list.innerHTML = h;
+
+    [].forEach.call(list.querySelectorAll('.video-card'), function (el) {
+      el.onclick = function () {
+        var id = this.dataset.id;
+        var title = decodeURIComponent(this.dataset.title);
+        var ch = decodeURIComponent(this.dataset.ch);
+        var dur = this.dataset.dur;
+        addHistoryItem({ id: id, title: title, channel: ch, duration: dur });
+        playVideo(id, title);
+      };
+    });
+  }
+
+  function playVideo(videoTarget, displayTitle) {
+    stop();
+    curVideo = videoTarget;
+    $('playerBox').style.display = 'block';
+    $('npTitle').textContent = displayTitle || videoTarget;
+    $('npFps').textContent = '0 FPS';
+    $('npMeta').textContent = 'Buffering stream...';
+    setStatus('Buffering YouTube stream: ' + (displayTitle || videoTarget));
+
+    // Setup canvas
+    nc.width = 854;
+    nc.height = 480;
+
+    // Start Audio
+    na.preload = 'none';
+    na.src = '/api/live-audio?yt=' + encodeURIComponent(videoTarget) + '&_=' + Date.now();
+    na.load();
+    (function tryPlay() {
+      na.play().catch(function () { setTimeout(tryPlay, 150); });
+    })();
+
+    // Start Video via WebSocket
+    fpsCount = 0;
+    lastFps = 0;
+    var quality = $('quality').value || '720';
+    var wsUrl = (window.location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' +
+      window.location.host + '/ws/mpeg1?yt=' + encodeURIComponent(videoTarget) + '&quality=' + quality;
+
+    var startPlayer = function () {
+      if (player) return;
+      $('npMeta').textContent = 'Connecting JSMpeg...';
+      try {
+        player = new JSMpeg.Player(wsUrl, {
+          canvas: nc,
+          audio: false,
+          streaming: true,
+          maxBufferSize: 1024 * 1024,
+          pauseWhenHidden: false,
+          preserveDrawingBuffer: true,
+          onVideoDecode: function () {
+            if (!player) return;
+            fpsCount++;
+            var now = Date.now();
+            if (now - lastFps >= 1000) {
+              $('npFps').textContent = fpsCount + ' FPS';
+              fpsCount = 0;
+              lastFps = now;
+              $('npMeta').textContent = 'Live MPEG1 ' + quality + 'p';
+            }
+          }
+        });
+      } catch (e) {
+        setStatus('JSMpeg player error: ' + e.message);
+      }
+    };
+
+    // Synchronize video launch with audio start
+    var syncTimer = setInterval(function () {
+      if (na.readyState >= 2 && na.currentTime > 0) {
+        clearInterval(syncTimer);
+        startPlayer();
+      }
+    }, 200);
+
+    // Timeout: force start video even if audio takes time
+    setTimeout(function () {
+      clearInterval(syncTimer);
+      startPlayer();
+    }, 4000);
+  }
+
+  function stop() {
+    if (player) {
+      try { player.destroy(); } catch (e) {}
+      player = null;
+    }
+    na.pause();
+    na.src = '';
+    curVideo = null;
+    $('playerBox').style.display = 'none';
+    setStatus('Player stopped');
+  }
+
+  $('npStop').onclick = stop;
+  $('btnSyncPlus').onclick = function () {
+    try { na.currentTime = Math.min(na.currentTime + 1, na.duration || 9999); } catch (e) {}
+  };
+  $('btnSyncMinus').onclick = function () {
+    try { na.currentTime = Math.max(na.currentTime - 1, 0); } catch (e) {}
+  };
+  $('vol').oninput = function () { na.volume = this.value / 100; };
+
+  $('quality').onchange = function () {
+    if (curVideo) playVideo(curVideo, $('npTitle').textContent);
+  };
+
+  $('btnSearch').onclick = function () {
+    var q = $('inpSearch').value.trim();
+    if (q) searchYouTube(q);
+  };
+
+  $('inpSearch').onkeydown = function (e) {
+    if (e.key === 'Enter') $('btnSearch').click();
+  };
+
+  $('btnDirectPlay').onclick = function () {
+    var raw = $('inpSearch').value.trim();
+    if (!raw) return;
+    addHistoryItem({ id: raw, title: raw });
+    playVideo(raw, raw);
+  };
+
+  [].forEach.call(document.querySelectorAll('.pill'), function (pill) {
+    pill.onclick = function () {
+      var q = this.dataset.q;
+      $('inpSearch').value = q;
+      searchYouTube(q);
+    };
+  });
+
+  $('clearHistory').onclick = function () {
+    history = [];
+    saveHistory();
+    renderHistory();
+  };
+
+  renderHistory();
+})();
+</script>
+</body>
+</html>

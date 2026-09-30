@@ -210,7 +210,9 @@ function resolveYouTubeCookies() {
     try {
       const os = require('os');
       const tmpPath = path.join(os.tmpdir(), 'tesla_yt_cookies.txt');
-      const decoded = Buffer.from(b64.trim(), 'base64').toString('utf8');
+      let decoded = Buffer.from(b64.trim(), 'base64').toString('utf8');
+      if (decoded.includes('\\n')) decoded = decoded.replace(/\\n/g, '\n');
+      if (decoded.includes('\\t')) decoded = decoded.replace(/\\t/g, '\t');
       if (decoded.length > 20) {
         fs.writeFileSync(tmpPath, decoded, { mode: 0o600 });
         return tmpPath;
@@ -226,7 +228,10 @@ function resolveYouTubeCookies() {
     try {
       const os = require('os');
       const tmpPath = path.join(os.tmpdir(), 'tesla_yt_cookies.txt');
-      fs.writeFileSync(tmpPath, raw.trim(), { mode: 0o600 });
+      let content = raw.trim();
+      if (content.includes('\\n')) content = content.replace(/\\n/g, '\n');
+      if (content.includes('\\t')) content = content.replace(/\\t/g, '\t');
+      fs.writeFileSync(tmpPath, content, { mode: 0o600 });
       return tmpPath;
     } catch (e) {
       console.warn('[Cookies] Error writing raw cookies to tmp:', e.message);
@@ -241,11 +246,10 @@ function getYouTubeArgs() {
   const args = [];
   if (cookiePath) {
     args.push('--cookies', cookiePath);
-    // When logged-in cookies are available, web and mweb player clients use them properly
-    args.push('--extractor-args', 'youtube:player_client=web,mweb,ios');
-  } else {
-    args.push('--extractor-args', 'youtube:player_client=android,ios,mweb,web');
   }
+  // Enable android, ios, and web with formats=missing_pot so formats (including m3u8 HLS streams)
+  // are retained even without a GVS PO Token instead of failing with "Requested format is not available"
+  args.push('--extractor-args', 'youtube:player_client=android,ios,web;formats=missing_pot');
   return args;
 }
 
@@ -495,7 +499,7 @@ app.get('/api/live-audio', (req, res) => {
 
   const ytdlp = spawn(ytdlpBin, [
     ...getYouTubeArgs(),
-    '-f', '18/bestaudio/best',
+    '-f', '234/233/140/251/18/bestaudio/best',
     '--no-playlist',
     '--no-warnings',
     '-o', '-',
@@ -516,13 +520,23 @@ app.get('/api/live-audio', (req, res) => {
   let ytdlpStderr = '';
   let ffmpegStderr = '';
   let cleanedUp = false;
+  let audioWatchdog = null;
 
   const cleanup = () => {
     if (cleanedUp) return;
     cleanedUp = true;
+    if (audioWatchdog) clearTimeout(audioWatchdog);
     try { ytdlp.kill('SIGKILL'); } catch (e) { }
     try { ffmpeg.kill('SIGKILL'); } catch (e) { }
   };
+
+  audioWatchdog = setTimeout(() => {
+    if (audioBytesSent === 0 && !cleanedUp) {
+      console.warn('[Audio] Stream initialization timed out after 20s with 0 bytes');
+      cleanup();
+      try { res.end(); } catch (e) { }
+    }
+  }, 20000);
 
   ytdlp.stderr.on('data', (d) => {
     ytdlpStderr = (ytdlpStderr + d.toString()).slice(-800);
@@ -538,6 +552,9 @@ app.get('/api/live-audio', (req, res) => {
 
   ytdlp.stdout.pipe(ffmpeg.stdin);
   ffmpeg.stdout.on('data', (chunk) => {
+    if (audioBytesSent === 0 && audioWatchdog) {
+      clearTimeout(audioWatchdog);
+    }
     audioBytesSent += chunk.length;
   });
   ffmpeg.stdout.pipe(res);
@@ -554,7 +571,7 @@ app.get('/api/live-audio', (req, res) => {
     try { res.end(); } catch (e) { }
   });
   ytdlp.on('close', (code) => {
-    if (code !== 0 && audioBytesSent === 0) {
+    if (audioBytesSent === 0) {
       let errorDetail = ytdlpStderr.trim().split('\n').pop() || `yt-dlp exited with code ${code}`;
       if (errorDetail.includes('Sign in to confirm') || errorDetail.includes('not a bot')) {
         errorDetail = 'YouTube bot check: Cloud IP blocked by YouTube. Set YT_COOKIES or upload cookies.txt to Render Secret Files.';
@@ -644,7 +661,7 @@ function streamMpeg1(ws, channelOrUrl, scale, ytParam) {
 
     const ytdlp = spawn(ytdlpBin, [
       ...getYouTubeArgs(),
-      '-f', '18/best[ext=mp4]/best',
+      '-f', '232/231/230/18/22/best[ext=mp4]/best',
       '--no-playlist',
       '--no-warnings',
       '-o', '-',
@@ -733,7 +750,7 @@ function streamMpeg1(ws, channelOrUrl, scale, ytParam) {
 
     ytdlp.on('close', (code) => {
       console.log(`[WS yt-dlp] Process exited with code ${code}`);
-      if (code !== 0 && videoBytesSent === 0) {
+      if (videoBytesSent === 0) {
         let errorDetail = ytdlpStderr.trim().split('\n').pop() || `yt-dlp exited with code ${code}`;
         if (errorDetail.includes('Sign in to confirm') || errorDetail.includes('not a bot')) {
           errorDetail = 'YouTube bot check: Cloud IP blocked by YouTube. Set YT_COOKIES or upload cookies.txt to Render Secret Files.';

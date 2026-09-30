@@ -172,6 +172,83 @@ function extractYouTubeTarget(input) {
   return null;
 }
 
+// Locate and resolve YouTube cookies (file path or environment variable)
+function resolveYouTubeCookies() {
+  if (process.env.YT_COOKIES_PATH) {
+    try {
+      if (fs.existsSync(process.env.YT_COOKIES_PATH)) {
+        return process.env.YT_COOKIES_PATH;
+      }
+    } catch (e) { }
+  }
+
+  // Render secret files or system secret files
+  const secretCandidates = [
+    '/etc/secrets/youtube-cookies.txt',
+    '/etc/secrets/cookies.txt'
+  ];
+  for (const p of secretCandidates) {
+    try {
+      if (fs.existsSync(p)) return p;
+    } catch (e) { }
+  }
+
+  // Local repository files
+  const localCandidates = [
+    path.join(__dirname, '..', 'youtube-cookies.txt'),
+    path.join(__dirname, '..', 'cookies.txt')
+  ];
+  for (const p of localCandidates) {
+    try {
+      if (fs.existsSync(p)) return p;
+    } catch (e) { }
+  }
+
+  // Base64 encoded cookies environment variable
+  const b64 = process.env.YT_COOKIES_BASE64 || process.env.YOUTUBE_COOKIES_BASE64;
+  if (b64 && b64.trim().length > 10) {
+    try {
+      const os = require('os');
+      const tmpPath = path.join(os.tmpdir(), 'tesla_yt_cookies.txt');
+      const decoded = Buffer.from(b64.trim(), 'base64').toString('utf8');
+      if (decoded.length > 20) {
+        fs.writeFileSync(tmpPath, decoded, { mode: 0o600 });
+        return tmpPath;
+      }
+    } catch (e) {
+      console.warn('[Cookies] Error writing base64 cookies to tmp:', e.message);
+    }
+  }
+
+  // Raw text cookies environment variable
+  const raw = process.env.YT_COOKIES || process.env.YOUTUBE_COOKIES;
+  if (raw && raw.trim().length > 20) {
+    try {
+      const os = require('os');
+      const tmpPath = path.join(os.tmpdir(), 'tesla_yt_cookies.txt');
+      fs.writeFileSync(tmpPath, raw.trim(), { mode: 0o600 });
+      return tmpPath;
+    } catch (e) {
+      console.warn('[Cookies] Error writing raw cookies to tmp:', e.message);
+    }
+  }
+
+  return null;
+}
+
+function getYouTubeArgs() {
+  const cookiePath = resolveYouTubeCookies();
+  const args = [];
+  if (cookiePath) {
+    args.push('--cookies', cookiePath);
+    // When logged-in cookies are available, web and mweb player clients use them properly
+    args.push('--extractor-args', 'youtube:player_client=web,mweb,ios');
+  } else {
+    args.push('--extractor-args', 'youtube:player_client=android,ios,mweb,web');
+  }
+  return args;
+}
+
 if (!fs.existsSync(PUBLIC_DIR)) {
   fs.mkdirSync(PUBLIC_DIR, { recursive: true });
 }
@@ -255,10 +332,15 @@ app.get('/api/health', (req, res) => {
     verifyDependenciesAsync().catch(() => {});
   }
 
+  const cookiePath = resolveYouTubeCookies();
   res.json({
     ok: healthState.ok,
     ytdlp: healthState.ytdlp,
     ffmpeg: healthState.ffmpeg,
+    cookies: {
+      active: Boolean(cookiePath),
+      source: cookiePath ? (cookiePath.includes('tesla_yt_cookies') ? 'env-variable' : cookiePath) : null
+    },
     env: {
       platform: process.platform,
       arch: process.arch,
@@ -285,7 +367,7 @@ app.get('/api/youtube/search', (req, res) => {
   const { spawn } = require('child_process');
   const searchArg = `ytsearch${limit}:${query}`;
   const p = spawn(YT_DLP, [
-    '--extractor-args', 'youtube:player_client=android,ios,mweb,web',
+    ...getYouTubeArgs(),
     '--no-playlist',
     '--no-warnings',
     '--print', '%(id)s|%(title)s|%(duration_string)s|%(channel)s',
@@ -347,7 +429,7 @@ app.get('/api/youtube/info', (req, res) => {
 
   const { spawn } = require('child_process');
   const p = spawn(YT_DLP, [
-    '--extractor-args', 'youtube:player_client=android,ios,mweb,web',
+    ...getYouTubeArgs(),
     '--no-playlist',
     '--no-warnings',
     '--print', '%(id)s|%(title)s|%(duration_string)s|%(channel)s|%(thumbnail)s',
@@ -412,8 +494,8 @@ app.get('/api/live-audio', (req, res) => {
   });
 
   const ytdlp = spawn(ytdlpBin, [
+    ...getYouTubeArgs(),
     '-f', '18/bestaudio/best',
-    '--extractor-args', 'youtube:player_client=android,ios,mweb,web',
     '--no-playlist',
     '--no-warnings',
     '-o', '-',
@@ -473,7 +555,11 @@ app.get('/api/live-audio', (req, res) => {
   });
   ytdlp.on('close', (code) => {
     if (code !== 0 && audioBytesSent === 0) {
-      console.error(`[Audio yt-dlp failure code ${code}]:`, ytdlpStderr.trim().split('\n').pop());
+      let errorDetail = ytdlpStderr.trim().split('\n').pop() || `yt-dlp exited with code ${code}`;
+      if (errorDetail.includes('Sign in to confirm') || errorDetail.includes('not a bot')) {
+        errorDetail = 'YouTube bot check: Cloud IP blocked by YouTube. Set YT_COOKIES or upload cookies.txt to Render Secret Files.';
+      }
+      console.error(`[Audio yt-dlp failure code ${code}]:`, errorDetail);
       cleanup();
       try { res.end(); } catch (e) { }
     }
@@ -501,10 +587,12 @@ const wss = new WebSocketServer({ noServer: true, perMessageDeflate: true });
 
 const server = app.listen(PORT, HOST, () => {
   const displayHost = HOST === '0.0.0.0' ? 'localhost' : HOST;
+  const cookiePath = resolveYouTubeCookies();
   console.log(`\n============================================================`);
   console.log(`Tesla Video Drive running on http://${displayHost}:${PORT} (bound to ${HOST})`);
   console.log(`Resolved yt-dlp: ${YT_DLP}`);
   console.log(`Resolved ffmpeg: ${FFMPEG}`);
+  console.log(`YouTube cookies: ${cookiePath ? `Active (${cookiePath})` : 'None detected (anonymous mode)'}`);
   console.log(`Static files served from: ${PUBLIC_DIR}`);
   console.log(`============================================================\n`);
 });
@@ -555,8 +643,8 @@ function streamMpeg1(ws, channelOrUrl, scale, ytParam) {
     ws.send(JSON.stringify({ type: 'status', message: 'Starting YouTube stream...' }));
 
     const ytdlp = spawn(ytdlpBin, [
+      ...getYouTubeArgs(),
       '-f', '18/best[ext=mp4]/best',
-      '--extractor-args', 'youtube:player_client=android,ios,mweb,web',
       '--no-playlist',
       '--no-warnings',
       '-o', '-',
@@ -590,7 +678,10 @@ function streamMpeg1(ws, channelOrUrl, scale, ytParam) {
 
     const watchdogTimer = setTimeout(() => {
       if (videoBytesSent === 0 && !cleanedUp) {
-        const errorDetail = ytdlpStderr.trim().split('\n').pop() || 'YouTube stream initialization timed out (25s)';
+        let errorDetail = ytdlpStderr.trim().split('\n').pop() || 'YouTube stream initialization timed out (25s)';
+        if (errorDetail.includes('Sign in to confirm') || errorDetail.includes('not a bot')) {
+          errorDetail = 'YouTube bot check: Cloud IP blocked by YouTube. Set YT_COOKIES or upload cookies.txt to Render Secret Files.';
+        }
         console.warn(`[WS Stream] Timed out waiting for video data: ${errorDetail}`);
         if (ws.readyState === 1) {
           ws.send(JSON.stringify({ type: 'error', message: errorDetail }));
@@ -643,7 +734,10 @@ function streamMpeg1(ws, channelOrUrl, scale, ytParam) {
     ytdlp.on('close', (code) => {
       console.log(`[WS yt-dlp] Process exited with code ${code}`);
       if (code !== 0 && videoBytesSent === 0) {
-        const errorDetail = ytdlpStderr.trim().split('\n').pop() || `yt-dlp exited with code ${code}`;
+        let errorDetail = ytdlpStderr.trim().split('\n').pop() || `yt-dlp exited with code ${code}`;
+        if (errorDetail.includes('Sign in to confirm') || errorDetail.includes('not a bot')) {
+          errorDetail = 'YouTube bot check: Cloud IP blocked by YouTube. Set YT_COOKIES or upload cookies.txt to Render Secret Files.';
+        }
         console.error(`[WS yt-dlp failed]: ${errorDetail}`);
         if (ws.readyState === 1) {
           ws.send(JSON.stringify({ type: 'error', message: errorDetail }));

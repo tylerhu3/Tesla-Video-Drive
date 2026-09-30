@@ -89,7 +89,7 @@ h2{font-size:.72rem;color:#888;text-transform:uppercase;margin-bottom:6px;letter
 <div class="p">
   <h2>Search or Video URL</h2>
   <div class="row">
-    <input class="inp" id="inpSearch" placeholder="Search YouTube or paste URL / Video ID" value="https://www.youtube.com/watch?v=6lbPgfKK7m4&list=RDEMCVHU9si_uYjDkU5K94lqPA">
+    <input class="inp" id="inpSearch" placeholder="Search YouTube or paste URL / Video ID" value="https://www.youtube.com/watch?v=dQw4w9WgXcQ">
     <button class="btn btn-red" id="btnSearch">Search</button>
     <button class="btn btn-dark" id="btnDirectPlay">Play</button>
   </div>
@@ -173,10 +173,15 @@ h2{font-size:.72rem;color:#888;text-transform:uppercase;margin-bottom:6px;letter
       try {
         var h = JSON.parse(x.responseText);
         var alertEl = $('serverAlert');
+        if (h.ytdlp && h.ytdlp.version === 'Checking...') {
+          // If server is still performing startup verification, poll again shortly
+          setTimeout(checkServerHealth, 2000);
+          return;
+        }
         if (!h.ok) {
           var msgs = [];
-          if (!h.ytdlp.ok) msgs.push('yt-dlp missing on server (' + (h.ytdlp.version || h.ytdlp.path) + ')');
-          if (!h.ffmpeg.ok) msgs.push('ffmpeg missing on server (' + (h.ffmpeg.version || h.ffmpeg.path) + ')');
+          if (!h.ytdlp.ok) msgs.push('yt-dlp (' + (h.ytdlp.version || h.ytdlp.path) + ')');
+          if (!h.ffmpeg.ok) msgs.push('ffmpeg (' + (h.ffmpeg.version || h.ffmpeg.path) + ')');
           alertEl.style.display = 'block';
           alertEl.innerHTML = '⚠️ <b>Server Warning:</b> ' + msgs.join(', ') + '. Video playback will fail until server dependencies are ready.';
         } else {

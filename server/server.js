@@ -14,22 +14,41 @@ const PORT = process.env.PORT || 8742;
 const HOST = process.env.HOST || '0.0.0.0';
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 
+let cachedYtDlp = null;
+let cachedFfmpeg = null;
+
 // Locate yt-dlp binary across common environments
 function resolveYtDlp() {
+  if (cachedYtDlp && fs.existsSync(cachedYtDlp)) {
+    return cachedYtDlp;
+  }
+
   if (process.env.YT_DLP) {
     try {
-      if (fs.existsSync(process.env.YT_DLP)) return process.env.YT_DLP;
+      if (fs.existsSync(process.env.YT_DLP)) {
+        cachedYtDlp = process.env.YT_DLP;
+        return cachedYtDlp;
+      }
     } catch (e) { }
+  }
+
+  const localBin = path.join(__dirname, '..', 'bin', 'yt-dlp');
+  if (fs.existsSync(localBin)) {
+    try { fs.chmodSync(localBin, 0o755); } catch (_) {}
+    cachedYtDlp = localBin;
+    return cachedYtDlp;
   }
 
   // Check `which yt-dlp` in current PATH
   try {
-    const whichOut = require('child_process').execSync('which yt-dlp', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
-    if (whichOut && fs.existsSync(whichOut)) return whichOut;
+    const whichOut = require('child_process').execSync('which yt-dlp', { stdio: ['ignore', 'pipe', 'ignore'], timeout: 3000 }).toString().trim();
+    if (whichOut && fs.existsSync(whichOut)) {
+      cachedYtDlp = whichOut;
+      return cachedYtDlp;
+    }
   } catch (e) { }
 
   const candidates = [
-    path.join(__dirname, '..', 'bin', 'yt-dlp'),
     path.join(__dirname, '..', 'bin', 'yt-dlp_linux'),
     '/usr/local/bin/yt-dlp',
     '/usr/bin/yt-dlp',
@@ -40,8 +59,9 @@ function resolveYtDlp() {
   for (const c of candidates) {
     try {
       if (fs.existsSync(c)) {
-        try { fs.accessSync(c, fs.constants.X_OK); } catch (_) { fs.chmodSync(c, 0o755); }
-        return c;
+        try { fs.chmodSync(c, 0o755); } catch (_) {}
+        cachedYtDlp = c;
+        return cachedYtDlp;
       }
     } catch (e) { }
   }
@@ -51,32 +71,43 @@ function resolveYtDlp() {
     const installerScript = path.join(__dirname, '..', 'scripts', 'install-ytdlp.js');
     if (fs.existsSync(installerScript)) {
       console.log('[INIT] yt-dlp not found on system. Triggering automatic download...');
-      require('child_process').execSync(`node "${installerScript}"`, { stdio: 'inherit', timeout: 30000 });
-      const localBin = path.join(__dirname, '..', 'bin', 'yt-dlp');
+      require('child_process').execSync(`node "${installerScript}"`, { stdio: 'inherit', timeout: 60000 });
       if (fs.existsSync(localBin)) {
-        return localBin;
+        cachedYtDlp = localBin;
+        return cachedYtDlp;
       }
     }
   } catch (e) {
     console.warn('[INIT] Standalone yt-dlp installation attempt error:', e.message);
   }
 
-  return 'yt-dlp';
+  cachedYtDlp = 'yt-dlp';
+  return cachedYtDlp;
 }
 let YT_DLP = resolveYtDlp();
 
 // Locate ffmpeg binary across common environments
 function resolveFfmpeg() {
+  if (cachedFfmpeg && fs.existsSync(cachedFfmpeg)) {
+    return cachedFfmpeg;
+  }
+
   if (process.env.FFMPEG_PATH) {
     try {
-      if (fs.existsSync(process.env.FFMPEG_PATH)) return process.env.FFMPEG_PATH;
+      if (fs.existsSync(process.env.FFMPEG_PATH)) {
+        cachedFfmpeg = process.env.FFMPEG_PATH;
+        return cachedFfmpeg;
+      }
     } catch (e) { }
   }
 
   // Check `which ffmpeg` in PATH
   try {
-    const whichOut = require('child_process').execSync('which ffmpeg', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
-    if (whichOut && fs.existsSync(whichOut)) return whichOut;
+    const whichOut = require('child_process').execSync('which ffmpeg', { stdio: ['ignore', 'pipe', 'ignore'], timeout: 3000 }).toString().trim();
+    if (whichOut && fs.existsSync(whichOut)) {
+      cachedFfmpeg = whichOut;
+      return cachedFfmpeg;
+    }
   } catch (e) { }
 
   const candidates = [
@@ -87,7 +118,10 @@ function resolveFfmpeg() {
   ];
   for (const c of candidates) {
     try {
-      if (fs.existsSync(c)) return c;
+      if (fs.existsSync(c)) {
+        cachedFfmpeg = c;
+        return cachedFfmpeg;
+      }
     } catch (e) { }
   }
 
@@ -95,11 +129,13 @@ function resolveFfmpeg() {
   try {
     const installer = require('@ffmpeg-installer/ffmpeg');
     if (installer && installer.path && fs.existsSync(installer.path)) {
-      return installer.path;
+      cachedFfmpeg = installer.path;
+      return cachedFfmpeg;
     }
   } catch (e) { }
 
-  return 'ffmpeg';
+  cachedFfmpeg = 'ffmpeg';
+  return cachedFfmpeg;
 }
 let FFMPEG = resolveFfmpeg();
 
@@ -156,38 +192,73 @@ app.post('/api/probe-report', express.json({ limit: '1mb' }), (req, res) => {
   res.json({ ok: true, file: filename });
 });
 
-
-
 // ============================================================
-// HEALTH & DIAGNOSTICS
+// HEALTH & DIAGNOSTICS (Async & Cached)
 // ============================================================
+let healthState = {
+  ok: false,
+  ytdlp: { path: resolveYtDlp(), version: 'Checking...', ok: false },
+  ffmpeg: { path: resolveFfmpeg(), version: 'Checking...', ok: false },
+  checking: false,
+  lastCheck: 0
+};
+
+function verifyDependenciesAsync() {
+  if (healthState.checking) return Promise.resolve(healthState);
+  healthState.checking = true;
+
+  const { exec } = require('child_process');
+  const ytdlpPath = resolveYtDlp();
+  const ffmpegPath = resolveFfmpeg();
+
+  const checkYtDlp = new Promise((resolve) => {
+    exec(`"${ytdlpPath}" --version`, { timeout: 20000 }, (err, stdout, stderr) => {
+      if (!err && stdout && stdout.trim()) {
+        healthState.ytdlp = { path: ytdlpPath, version: stdout.trim(), ok: true };
+      } else {
+        const msg = err ? (err.killed ? 'Command timed out (20s)' : err.message) : (stderr.trim() || 'Check failed');
+        healthState.ytdlp = { path: ytdlpPath, version: msg, ok: false };
+      }
+      resolve();
+    });
+  });
+
+  const checkFfmpeg = new Promise((resolve) => {
+    exec(`"${ffmpegPath}" -version`, { timeout: 10000 }, (err, stdout, stderr) => {
+      if (!err && stdout && stdout.trim()) {
+        healthState.ffmpeg = { path: ffmpegPath, version: stdout.split('\n')[0].trim(), ok: true };
+      } else {
+        const msg = err ? (err.killed ? 'Command timed out (10s)' : err.message) : (stderr.trim() || 'Check failed');
+        healthState.ffmpeg = { path: ffmpegPath, version: msg, ok: false };
+      }
+      resolve();
+    });
+  });
+
+  return Promise.all([checkYtDlp, checkFfmpeg]).then(() => {
+    healthState.ok = healthState.ytdlp.ok && healthState.ffmpeg.ok;
+    healthState.checking = false;
+    healthState.lastCheck = Date.now();
+    console.log(`[HEALTH] Dependencies: yt-dlp=${healthState.ytdlp.ok} (${healthState.ytdlp.version}), ffmpeg=${healthState.ffmpeg.ok}`);
+    return healthState;
+  });
+}
+
+// Initial verification on startup
+setTimeout(() => {
+  verifyDependenciesAsync().catch(e => console.error('[HEALTH] Initial check error:', e));
+}, 300);
+
 app.get('/api/health', (req, res) => {
-  const { execSync } = require('child_process');
-  let ytdlpVer = null;
-  let ffmpegVer = null;
-  let ytdlpOk = false;
-  let ffmpegOk = false;
-
-  try {
-    YT_DLP = resolveYtDlp();
-    ytdlpVer = execSync(`"${YT_DLP}" --version`, { stdio: ['ignore', 'pipe', 'ignore'], timeout: 4000 }).toString().trim();
-    ytdlpOk = true;
-  } catch (e) {
-    ytdlpVer = e.message;
-  }
-
-  try {
-    FFMPEG = resolveFfmpeg();
-    ffmpegVer = execSync(`"${FFMPEG}" -version`, { stdio: ['ignore', 'pipe', 'ignore'], timeout: 4000 }).toString().split('\n')[0].trim();
-    ffmpegOk = true;
-  } catch (e) {
-    ffmpegVer = e.message;
+  const isStale = (Date.now() - healthState.lastCheck > 60000);
+  if ((!healthState.ok || isStale) && !healthState.checking) {
+    verifyDependenciesAsync().catch(() => {});
   }
 
   res.json({
-    ok: ytdlpOk && ffmpegOk,
-    ytdlp: { path: YT_DLP, version: ytdlpVer, ok: ytdlpOk },
-    ffmpeg: { path: FFMPEG, version: ffmpegVer, ok: ffmpegOk },
+    ok: healthState.ok,
+    ytdlp: healthState.ytdlp,
+    ffmpeg: healthState.ffmpeg,
     env: {
       platform: process.platform,
       arch: process.arch,
@@ -198,6 +269,7 @@ app.get('/api/health', (req, res) => {
     uptime: Math.round(process.uptime())
   });
 });
+
 
 // ============================================================
 // YOUTUBE: search
@@ -213,7 +285,9 @@ app.get('/api/youtube/search', (req, res) => {
   const { spawn } = require('child_process');
   const searchArg = `ytsearch${limit}:${query}`;
   const p = spawn(YT_DLP, [
-    '--extractor-args', 'youtube:player_client=android',
+    '--extractor-args', 'youtube:player_client=android,ios,mweb,web',
+    '--no-playlist',
+    '--no-warnings',
     '--print', '%(id)s|%(title)s|%(duration_string)s|%(channel)s',
     searchArg
   ], { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -273,7 +347,9 @@ app.get('/api/youtube/info', (req, res) => {
 
   const { spawn } = require('child_process');
   const p = spawn(YT_DLP, [
-    '--extractor-args', 'youtube:player_client=android',
+    '--extractor-args', 'youtube:player_client=android,ios,mweb,web',
+    '--no-playlist',
+    '--no-warnings',
     '--print', '%(id)s|%(title)s|%(duration_string)s|%(channel)s|%(thumbnail)s',
     target.url
   ], { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -324,10 +400,10 @@ app.get('/api/live-audio', (req, res) => {
     return res.status(400).send('Invalid or missing YouTube target');
   }
 
-  YT_DLP = resolveYtDlp();
-  FFMPEG = resolveFfmpeg();
+  const ytdlpBin = resolveYtDlp();
+  const ffmpegBin = resolveFfmpeg();
 
-  console.log(`[Audio] Starting audio stream for ${ytTarget.url} (yt-dlp: ${YT_DLP}, ffmpeg: ${FFMPEG})`);
+  console.log(`[Audio] Starting audio stream for ${ytTarget.url} (yt-dlp: ${ytdlpBin}, ffmpeg: ${ffmpegBin})`);
 
   res.writeHead(200, {
     'Content-Type': 'audio/mpeg',
@@ -335,14 +411,16 @@ app.get('/api/live-audio', (req, res) => {
     'Access-Control-Allow-Origin': '*',
   });
 
-  const ytdlp = spawn(YT_DLP, [
-    '-f', '18/best',
-    '--extractor-args', 'youtube:player_client=android',
+  const ytdlp = spawn(ytdlpBin, [
+    '-f', '18/bestaudio/best',
+    '--extractor-args', 'youtube:player_client=android,ios,mweb,web',
+    '--no-playlist',
+    '--no-warnings',
     '-o', '-',
     ytTarget.url
   ], { stdio: ['ignore', 'pipe', 'pipe'] });
 
-  const ffmpeg = spawn(FFMPEG, [
+  const ffmpeg = spawn(ffmpegBin, [
     '-re',
     '-i', '-',
     '-vn',
@@ -355,6 +433,14 @@ app.get('/api/live-audio', (req, res) => {
   let audioBytesSent = 0;
   let ytdlpStderr = '';
   let ffmpegStderr = '';
+  let cleanedUp = false;
+
+  const cleanup = () => {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    try { ytdlp.kill('SIGKILL'); } catch (e) { }
+    try { ffmpeg.kill('SIGKILL'); } catch (e) { }
+  };
 
   ytdlp.stderr.on('data', (d) => {
     ytdlpStderr = (ytdlpStderr + d.toString()).slice(-800);
@@ -374,11 +460,6 @@ app.get('/api/live-audio', (req, res) => {
   });
   ffmpeg.stdout.pipe(res);
 
-  const cleanup = () => {
-    try { ytdlp.kill(); } catch (e) { }
-    try { ffmpeg.kill(); } catch (e) { }
-  };
-
   req.on('close', () => {
     console.log(`[Audio] Client closed connection, audio bytes sent: ${audioBytesSent}`);
     cleanup();
@@ -388,21 +469,26 @@ app.get('/api/live-audio', (req, res) => {
   ytdlp.on('error', (err) => {
     console.error(`[Audio yt-dlp error]`, err.message);
     cleanup();
+    try { res.end(); } catch (e) { }
   });
   ytdlp.on('close', (code) => {
     if (code !== 0 && audioBytesSent === 0) {
       console.error(`[Audio yt-dlp failure code ${code}]:`, ytdlpStderr.trim().split('\n').pop());
+      cleanup();
+      try { res.end(); } catch (e) { }
     }
   });
 
   ffmpeg.on('error', (err) => {
     console.error(`[Audio ffmpeg error]`, err.message);
     cleanup();
+    try { res.end(); } catch (e) { }
   });
   ffmpeg.on('exit', (code) => {
     if (code !== 0 && audioBytesSent === 0) {
       console.error(`[Audio ffmpeg exit code ${code}]:`, ffmpegStderr.trim().split('\n').pop());
     }
+    cleanup();
     try { res.end(); } catch (e) { }
   });
 });
@@ -459,8 +545,8 @@ function streamMpeg1(ws, channelOrUrl, scale, ytParam) {
   scale = scale || '1280:720';
   const bitrate = scale.endsWith('480') ? '800k' : scale.endsWith('720') ? '1500k' : '2500k';
 
-  YT_DLP = resolveYtDlp();
-  FFMPEG = resolveFfmpeg();
+  const ytdlpBin = resolveYtDlp();
+  const ffmpegBin = resolveFfmpeg();
 
   // Check if YouTube
   const ytTarget = extractYouTubeTarget(ytParam || (channelOrUrl.includes('youtu') ? channelOrUrl : ''));
@@ -468,14 +554,16 @@ function streamMpeg1(ws, channelOrUrl, scale, ytParam) {
     console.log(`[WS Stream] Initiating YouTube MPEG1 pipeline for ${ytTarget.url}`);
     ws.send(JSON.stringify({ type: 'status', message: 'Starting YouTube stream...' }));
 
-    const ytdlp = spawn(YT_DLP, [
-      '-f', '18/best',
-      '--extractor-args', 'youtube:player_client=android',
+    const ytdlp = spawn(ytdlpBin, [
+      '-f', '18/best[ext=mp4]/best',
+      '--extractor-args', 'youtube:player_client=android,ios,mweb,web',
+      '--no-playlist',
+      '--no-warnings',
       '-o', '-',
       ytTarget.url
     ], { stdio: ['ignore', 'pipe', 'pipe'] });
 
-    const ffmpeg = spawn(FFMPEG, [
+    const ffmpeg = spawn(ffmpegBin, [
       '-re',
       '-i', '-',
       '-an',
@@ -490,11 +578,31 @@ function streamMpeg1(ws, channelOrUrl, scale, ytParam) {
     let videoBytesSent = 0;
     let ytdlpStderr = '';
     let ffmpegStderr = '';
+    let cleanedUp = false;
+
+    const cleanup = () => {
+      if (cleanedUp) return;
+      cleanedUp = true;
+      if (watchdogTimer) clearTimeout(watchdogTimer);
+      try { ytdlp.kill('SIGKILL'); } catch (e) { }
+      try { ffmpeg.kill('SIGKILL'); } catch (e) { }
+    };
+
+    const watchdogTimer = setTimeout(() => {
+      if (videoBytesSent === 0 && !cleanedUp) {
+        const errorDetail = ytdlpStderr.trim().split('\n').pop() || 'YouTube stream initialization timed out (25s)';
+        console.warn(`[WS Stream] Timed out waiting for video data: ${errorDetail}`);
+        if (ws.readyState === 1) {
+          ws.send(JSON.stringify({ type: 'error', message: errorDetail }));
+        }
+        cleanup();
+        try { ws.close(); } catch (e) { }
+      }
+    }, 25000);
 
     ytdlp.stderr.on('data', (d) => {
       const str = d.toString();
       ytdlpStderr = (ytdlpStderr + str).slice(-1000);
-      // Log informative lines only, avoiding percent spam
       if (str.includes('[youtube]') || str.includes('ERROR') || str.includes('WARNING') || str.includes('[info]')) {
         console.log(`[WS yt-dlp] ${str.trim()}`);
       }
@@ -516,16 +624,12 @@ function streamMpeg1(ws, channelOrUrl, scale, ytParam) {
 
     ffmpeg.stdout.on('data', (chunk) => {
       if (videoBytesSent === 0) {
+        if (watchdogTimer) clearTimeout(watchdogTimer);
         console.log(`[WS Stream] First MPEG1 video chunk produced (${chunk.length} bytes), streaming to client...`);
       }
       videoBytesSent += chunk.length;
       if (ws.readyState === 1) ws.send(chunk);
     });
-
-    const cleanup = () => {
-      try { ytdlp.kill(); } catch (e) { }
-      try { ffmpeg.kill(); } catch (e) { }
-    };
 
     ytdlp.on('error', (err) => {
       console.error(`[WS yt-dlp spawn error]:`, err.message);
@@ -533,6 +637,7 @@ function streamMpeg1(ws, channelOrUrl, scale, ytParam) {
         ws.send(JSON.stringify({ type: 'error', message: 'yt-dlp spawn failed: ' + err.message }));
       }
       cleanup();
+      try { ws.close(); } catch (e) { }
     });
 
     ytdlp.on('close', (code) => {
@@ -543,6 +648,8 @@ function streamMpeg1(ws, channelOrUrl, scale, ytParam) {
         if (ws.readyState === 1) {
           ws.send(JSON.stringify({ type: 'error', message: errorDetail }));
         }
+        cleanup();
+        try { ws.close(); } catch (e) { }
       }
     });
 
@@ -552,6 +659,7 @@ function streamMpeg1(ws, channelOrUrl, scale, ytParam) {
         ws.send(JSON.stringify({ type: 'error', message: 'ffmpeg transcode error: ' + err.message }));
       }
       cleanup();
+      try { ws.close(); } catch (e) { }
     });
 
     ffmpeg.on('close', (code) => {
@@ -573,6 +681,7 @@ function streamMpeg1(ws, channelOrUrl, scale, ytParam) {
     });
     return;
   }
+
 
   // Direct HTTP stream
   const isDirect = channelOrUrl.startsWith('http');
